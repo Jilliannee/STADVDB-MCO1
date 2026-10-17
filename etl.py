@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 STADVDB MCO1 - ETL script
-Source : MySQL  railway_source.services   (flat Dutch railway stop-event table, 2025)
+Source : MySQL  mco1.services_raw  (flat Dutch railway stop-event table, 2025)
 Target : MySQL  railway_dw                (star schema: fact_stop_event + 4 dimensions)
 
 Pipeline
@@ -52,7 +52,7 @@ SRC = {
     "port": int(_env("SRC_PORT", "3306")),
     "user": _env("SRC_USER", "root"),
     "password": _env("SRC_PASSWORD"),
-    "database": _env("SRC_DB", "railway_source"),
+    "database": _env("SRC_DB", "mco1"),
 }
 DW = {
     "host": _env("DW_HOST", "localhost"),
@@ -62,7 +62,7 @@ DW = {
     "database": _env("DW_DB", "railway_dw"),
 }
 
-SRC_TABLE = "services"
+SRC_TABLE = "services_raw"
 
 # logical name -> actual column name in the source table.
 # If your imported table uses different names, edit the right-hand side only.
@@ -70,7 +70,7 @@ SRC_COLS = {
     "service_rdt_id": "service_rdt_id",
     "service_date": "service_date",
     "service_type": "service_type",
-    "company": "company",
+    "company": "service_company",
     "train_number": "train_number",
     "completely_cancelled": "completely_cancelled",
     "partly_cancelled": "partly_cancelled",
@@ -99,7 +99,8 @@ LOG_FILE = "etl.log"
 
 FACT_SRC_COLS = [
     "service_rdt_id", "service_date", "service_type", "company", "train_number",
-    "completely_cancelled", "partly_cancelled", "stop_rdt_id", "station_name",
+    "completely_cancelled", "partly_cancelled", "stop_rdt_id",
+    "station_code", "station_name",  # CHANGED: include station_code for reliable station-key lookup
     "arrival_time", "arrival_delay", "arrival_cancelled",
     "departure_time", "departure_delay", "departure_cancelled", "platform_change",
 ]
@@ -167,10 +168,13 @@ _BOOL_MAP = {"true": 1, "false": 0, "1": 1, "0": 0, "t": 1, "f": 0, "yes": 1, "n
 
 
 def to_flag(ser):
-    """'true'/'false' (or 0/1) -> int8 0/1. Returns (flag with NULL->0, mask of NULLs)."""
-    s = ser.astype("string").str.strip().str.lower().astype(object)
-    mapped = pd.to_numeric(s.map(_BOOL_MAP), errors="coerce")
-    return mapped.fillna(0).astype("int8"), ser.isna()
+    """Convert known Boolean forms to 0/1; return flag, null mask, and invalid-value mask."""
+    s = ser.astype("string").str.strip().str.lower()  # CHANGED: preserve nullable strings for validation
+    mapped = s.map(_BOOL_MAP)
+    null_mask = ser.isna() | s.eq("").fillna(False)
+    invalid_mask = (~null_mask) & mapped.isna()  # CHANGED: distinguish invalid values from genuine NULLs
+    flags = pd.to_numeric(mapped, errors="coerce").fillna(0).astype("int8")
+    return flags, null_mask, invalid_mask  # CHANGED: expose invalid values so ETL can reject them
 
 
 def time_band(hour):
@@ -264,25 +268,26 @@ def load_dim_station(src_conn, cur, stats):
     raw = pd.read_sql_query(text(f"SELECT DISTINCT {sel} FROM `{SRC_TABLE}`"), src_conn)
     raw["station_name"] = clean_text(raw["station_name"])
     raw["station_code"] = clean_text(raw["station_code"])
-    raw = raw.dropna(subset=["station_name"])
-    codes_per_name = raw.groupby("station_name")["station_code"].nunique()
-    stats["station_names_with_multiple_codes"] = int((codes_per_name > 1).sum())
-    # one row per station name; prefer a row that has a station code
-    st = (raw.sort_values("station_code", na_position="last")
-             .drop_duplicates("station_name"))
+
+    # CHANGED: station_code is the station identity; do not collapse distinct codes by station name.
+    # CHANGED: rows without a code cannot satisfy dim_station.station_code NOT NULL, so omit them here.
+    missing_codes = raw["station_code"].isna()
+    stats["source_station_rows_missing_code"] += int(missing_codes.sum())
+    raw = raw.dropna(subset=["station_code", "station_name"])
+    raw = raw.drop_duplicates(subset=["station_code"])
+
     bulk_insert(cur, "dim_station", ["station_code", "station_name"],
-                to_rows(st, ["station_code", "station_name"]), ignore=True)
-    cur.execute("SELECT station_name, station_key FROM dim_station")
+                to_rows(raw, ["station_code", "station_name"]), ignore=True)
+
+    # CHANGED: map station codes to surrogate keys instead of mapping by station name.
+    cur.execute("SELECT station_code, station_key FROM dim_station")
     station_map = dict(cur.fetchall())
-    missing = set(st["station_name"]) - set(station_map)
+    missing = set(raw["station_code"]) - set(station_map)
     if missing:
-        raise RuntimeError(
-            f"{len(missing)} station names collided in dim_station (case/accent-insensitive "
-            f"collation), e.g. {sorted(missing)[:3]}. Fix with:\n"
-            f"ALTER TABLE dim_station MODIFY station_name VARCHAR(100) "
-            f"CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL;")
-    log.info("dim_station: %s stations (%s names had >1 station code)",
-             len(station_map), stats["station_names_with_multiple_codes"])
+        raise RuntimeError(f"{len(missing)} station codes were not loaded into dim_station; "
+                           f"examples: {sorted(missing)[:3]}")
+    log.info("dim_station: %s stations; source rows missing station codes: %s",
+             len(station_map), stats["source_station_rows_missing_code"])
     return station_map
 
 
@@ -321,6 +326,7 @@ def transform_chunk(raw, station_map, train_df, date_keys, stats):
 
     # ---- CLEANING: whitespace, blanks -> NULL, NULL company/type -> 'Unknown'
     df["station_name"] = clean_text(df["station_name"])
+    df["station_code"] = clean_text(df["station_code"])  # CHANGED: clean station code before lookup
     comp = clean_text(df["company"])
     stats["filled_unknown_company"] += int(comp.isna().sum())
     df["company"] = comp.fillna("Unknown")
@@ -342,13 +348,16 @@ def transform_chunk(raw, station_map, train_df, date_keys, stats):
     stats["no_scheduled_departure(last stops)"] += int((df["sched_dep_time_key"] == -1).sum())
 
     # ---- FIXING NULLS / BOOLEANS: 'true'/'false' text -> 0/1 flags
-    arr_c, _ = to_flag(df["arrival_cancelled"])      # NULL = no arrival at this stop -> 0
-    dep_c, _ = to_flag(df["departure_cancelled"])    # NULL = no departure at this stop -> 0
-    full_c, full_null = to_flag(df["completely_cancelled"])
-    part_c, part_null = to_flag(df["partly_cancelled"])
-    plat, plat_null = to_flag(df["platform_change"])
+    arr_c, arr_null, arr_invalid = to_flag(df["arrival_cancelled"])  # CHANGED: capture invalid values
+    dep_c, dep_null, dep_invalid = to_flag(df["departure_cancelled"])  # CHANGED: capture invalid values
+    full_c, full_null, full_invalid = to_flag(df["completely_cancelled"])  # CHANGED
+    part_c, part_null, part_invalid = to_flag(df["partly_cancelled"])  # CHANGED
+    plat, plat_null, plat_invalid = to_flag(df["platform_change"])  # CHANGED
     stats["null_service_or_platform_flags_set_to_0"] += int(
         full_null.sum() + part_null.sum() + plat_null.sum())
+    # CHANGED: reject malformed Boolean values instead of silently treating them as false.
+    invalid_bool = arr_invalid | dep_invalid | full_invalid | part_invalid | plat_invalid
+    stats["invalid_boolean_values"] += int(invalid_bool.sum())
 
     # ---- MEASURES
     arr_d = pd.to_numeric(df["arrival_delay"], errors="coerce")
@@ -375,7 +384,7 @@ def transform_chunk(raw, station_map, train_df, date_keys, stats):
     df["platform_changed"] = plat
 
     # ---- MERGING: surrogate keys from the dimensions
-    df["station_key"] = df["station_name"].map(station_map)
+    df["station_key"] = df["station_code"].map(station_map)  # CHANGED: use station_code, not station_name
     df = df.merge(train_df, how="left", on=["company", "service_type", "train_number"])
 
     # ---- REJECT RULES (first matching reason wins)
@@ -389,14 +398,16 @@ def transform_chunk(raw, station_map, train_df, date_keys, stats):
     flag(df["service_rdt_id"].isna() | df["stop_rdt_id"].isna(), "missing service/stop id")
     flag(df["date_key"].isna() | ~df["date_key"].isin(date_keys), "invalid service date")
     flag(df["station_name"].isna(), "missing station name")
+    flag(df["station_code"].isna(), "missing station code")  # CHANGED: required for accurate station mapping
+    flag(invalid_bool, "invalid Boolean flag value")  # CHANGED: reject malformed Boolean values
     flag(df["train_number"].isna(), "missing train number")
     flag(out_of_range.reindex(df.index, fill_value=False), "delay out of SMALLINT range")
-    flag(df["station_key"].isna(), "station not in dim_station")
+    flag(df["station_key"].isna(), "station code not in dim_station")  # CHANGED: clarify code-based lookup
     flag(df["train_key"].isna(), "train not in dim_train")
     still_ok = df[reason == ""]
     dup = pd.Series(False, index=df.index)
     dup.loc[still_ok.index] = still_ok.duplicated(subset="stop_rdt_id", keep="first")
-    flag(dup, "duplicate stop id within chunk")
+    flag(dup, "duplicate stop id within chunk")  # NOTE: cross-chunk duplicates still need a DB-level check.
 
     bad = reason != ""
     if bad.any():
