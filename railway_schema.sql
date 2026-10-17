@@ -23,10 +23,11 @@ CREATE TABLE dim_time (
 ) ENGINE=InnoDB;
 
 CREATE TABLE dim_station (
-  station_key  INT AUTO_INCREMENT PRIMARY KEY,
-  station_code VARCHAR(20),
-  station_name VARCHAR(100) NOT NULL,
-  UNIQUE (station_name)
+  station_key   INT AUTO_INCREMENT PRIMARY KEY,
+  station_code  VARCHAR(10) NOT NULL UNIQUE,
+  station_name  VARCHAR(100) NOT NULL,
+  station_type  VARCHAR(40),                -- from stations CSV, if loaded
+  country       VARCHAR(10)                 -- from stations CSV, if loaded
 ) ENGINE=InnoDB;
 
 CREATE TABLE dim_train (
