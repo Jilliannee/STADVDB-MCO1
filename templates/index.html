@@ -49,6 +49,26 @@
     <tbody></tbody>
   </table>
 
+  <h2>Average arrival delay by station and hour (<span id="pivotTitle"></span>)</h2>
+  <div>
+    <label>Busiest stations <input id="pivotTop" type="number" value="15" min="1" max="50" style="width:4rem"></label>
+    <label>Query
+      <select id="pivotLevel">
+        <option value="1">Optimized</option>
+        <option value="0">Unoptimized</option>
+      </select></label>
+    <button onclick="loadPivot()">Run pivot</button>
+    <span id="pivotStatus"></span>
+  </div>
+  <p style="font-size:.9rem;color:#444">Each row is a station, each column an hour of the day (scheduled arrival).
+    Cells show the average delay in minutes; darker means later. Blank means no arrivals.</p>
+  <div style="overflow-x:auto">
+    <table id="pv" style="border-collapse:collapse;font-size:.8rem">
+      <thead></thead><tbody></tbody>
+    </table>
+  </div>
+  <div id="pivotLegend" style="margin-top:.5rem;font-size:.8rem"></div>
+
 <script>
 const MONTHS = ["January","February","March","April","May","June",
                 "July","August","September","October","November","December"];
@@ -111,12 +131,70 @@ async function loadDice() {
   }
 }
 
+
+// ---- Pivot: station (rows) x hour (columns) heat-map ----
+// Cell colour: white (lowest average delay in the table) -> red (highest).
+function heat(v, lo, hi) {
+  const t = hi > lo ? (v - lo) / (hi - lo) : 0;
+  const g = Math.round(255 - 175 * t);              // fade green+blue channels
+  return `rgb(255,${g},${g})`;
+}
+
+async function loadPivot() {
+  const y = document.getElementById("year").value;
+  const top = document.getElementById("pivotTop").value;
+  const level = document.getElementById("pivotLevel").value;
+  const status = document.getElementById("pivotStatus");
+  document.getElementById("pivotTitle").textContent = `top ${top} stations, ${y}`;
+  status.textContent = "Loading...";
+  try {
+    const r = await fetch(`/api/pivot?year=${y}&top=${top}&optimized=${level}`);
+    const p = await r.json();
+    if (!r.ok) throw new Error(p.error || `server returned ${r.status}`);
+
+    const all = p.rows.flatMap(row => row.values).filter(v => v !== null);
+    const lo = Math.min(...all), hi = Math.max(...all);
+
+    // Header: station + 24 hour columns + total (built with DOM calls, no innerHTML)
+    const thead = document.querySelector("#pv thead"); thead.replaceChildren();
+    const hr = thead.insertRow();
+    ["Station", ...p.hours, "Arrivals"].forEach(t => {
+      const th = document.createElement("th"); th.textContent = t;
+      th.style.cssText = "padding:2px 4px;border:1px solid #ccc;font-weight:normal"; hr.appendChild(th);
+    });
+
+    const tbody = document.querySelector("#pv tbody"); tbody.replaceChildren();
+    p.rows.forEach(row => {
+      const tr = tbody.insertRow();
+      const name = tr.insertCell(); name.textContent = row.station;
+      name.style.cssText = "padding:2px 6px;border:1px solid #ccc;white-space:nowrap;text-align:left";
+      row.values.forEach((v, i) => {
+        const td = tr.insertCell();
+        td.textContent = v === null ? "" : v.toFixed(1);
+        td.title = `${row.station} @ ${p.hours[i]}: ` + (v === null ? "no arrivals" : `${v} min`);
+        td.style.cssText = "padding:2px 4px;border:1px solid #ccc;text-align:right;min-width:2.4rem";
+        if (v !== null) td.style.background = heat(v, lo, hi);
+      });
+      const tot = tr.insertCell(); tot.textContent = num(row.total);
+      tot.style.cssText = "padding:2px 6px;border:1px solid #ccc;text-align:right";
+    });
+
+    document.getElementById("pivotLegend").textContent = all.length
+      ? `Scale: ${lo.toFixed(1)} min (white) to ${hi.toFixed(1)} min (red)` : "";
+    const label = level === "1" ? "optimized" : "unoptimized";
+    status.textContent = p.rows.length ? `${label}: ${p.elapsed_ms.toLocaleString()} ms` : "No rows for this selection.";
+  } catch (e) {
+    status.textContent = "Error: " + e.message;
+  }
+}
+
 // Each section loads on its own, so one failing query cannot blank the others.
 function load() {
   loadTrends().then(() => document.getElementById("trendStatus").textContent = "")
               .catch(e => document.getElementById("trendStatus").textContent =
                           "Monthly/weekly charts failed: " + e.message);
   loadDice();
+  loadPivot();
 }
 load();
 </script>
