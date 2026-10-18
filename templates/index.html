@@ -125,7 +125,7 @@ document.querySelectorAll(".tab").forEach(btn => btn.addEventListener("click", (
   document.querySelectorAll(".tab-panel").forEach(p => p.classList.remove("active"));
   btn.classList.add("active");
   document.getElementById(btn.dataset.tab).classList.add("active");
-  TAB_LOADERS[btn.dataset.tab]();   // re-render charts at the right size
+  TAB_LOADERS[btn.dataset.tab](); 
 }));
 
 // slice_drill-down
@@ -256,7 +256,6 @@ async function loadPivot() {
     const all = p.rows.flatMap(row => row.values).filter(v => v !== null);
     const lo = Math.min(...all), hi = Math.max(...all);
 
-    // Header: station + 24 hour columns + total (built with DOM calls, no innerHTML)
     const thead = document.querySelector("#pv thead"); thead.replaceChildren();
     const hr = thead.insertRow();
     ["Station", ...p.hours, "Arrivals"].forEach(t => {
