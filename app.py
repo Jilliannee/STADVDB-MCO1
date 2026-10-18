@@ -4,7 +4,7 @@ import pandas as pd
 from flask import Flask, Response, render_template, request
 from sqlalchemy import create_engine
 from sqlalchemy.engine import URL
-from queries import MONTHLY_SQL, WEEKLY_SQL
+from slice_drill import MONTHLY_SQL, WEEKLY_SQL
 
 engine = create_engine(URL.create(
     "mysql+pymysql",
