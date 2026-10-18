@@ -6,6 +6,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.engine import URL
 from slice_drill import MONTHLY_SQL, WEEKLY_SQL
 from dice import DAY_TYPES, STATIONS, run_dice
+from rollup import run_rollup
 
 engine = create_engine(URL.create(
     "mysql+pymysql",
@@ -25,6 +26,10 @@ def run(kind, yr, mo=None):
 @lru_cache(maxsize=64)
 def run_dice_cached(yr, stations, bands, day):
     return run_dice(engine, yr, stations, bands, day).to_json(orient="records")
+
+@lru_cache(maxsize=64)
+def run_rollup_cached(yr):
+    return run_rollup(engine, yr).to_json(orient="records")
 
 app = Flask(__name__)
 
@@ -55,6 +60,11 @@ def dice():
     return Response(run_dice_cached(request.args.get("year", 2025, type=int),
                                     stations, bands, day),
                     mimetype="application/json")
+
+@app.route("/api/rollup")
+def rollup():
+    yr = request.args.get("year", 2025, type=int)
+    return Response(run_rollup_cached(yr), mimetype="application/json")
 
 if __name__ == "__main__":
     app.run(debug=True)
