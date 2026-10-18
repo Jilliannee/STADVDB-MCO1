@@ -1,13 +1,13 @@
 import pandas as pd
 from sqlalchemy import bindparam, text
 
-# cancellations by station and time band for a chosen year.
-#   date: year and weekday/weekend
-#   time: selected time bands
-#   station: any of the 3 STATIONS 
+# cancellations by station and time band for a chosen year
+# date - year and weekday/weekend
+# time - selected time bands
+# station - any of the 3 station 
 
-DAY_TYPES = {"weekday": (0,), "weekend": (1,), "both": (0, 1)}  # dim_date.is_weekend values
-STATIONS = ("Amsterdam Centraal", "Utrecht Centraal", "Rotterdam Centraal")  # the only selectable stations
+DAY_TYPES = {"weekday": (0,), "weekend": (1,), "both": (0, 1)}
+STATIONS = ("Amsterdam Centraal", "Utrecht Centraal", "Rotterdam Centraal")
 
 DICE_SQL = text("""
 SELECT s.station_name,
@@ -38,5 +38,5 @@ def run_dice(engine, year, stations, bands, day="weekday"):
         "d_from": year * 10000 + 101, "d_to": year * 10000 + 1231,
         "stations": list(stations), "bands": list(bands),
         "day_types": list(DAY_TYPES[day])})
-    df[NUMBER_COLS] = df[NUMBER_COLS].apply(pd.to_numeric)  # MySQL SUM() returns Decimal -> JSON strings
+    df[NUMBER_COLS] = df[NUMBER_COLS].apply(pd.to_numeric)
     return df
