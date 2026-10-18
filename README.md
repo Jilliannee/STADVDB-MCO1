@@ -9,7 +9,8 @@ python -m pip install pytest pandas sqlalchemy
 
 
 to load data: 
-run railway_source first
-run the etl, next make sure to use this: python etl.py --chunk-size 50000
+run railway_source first and load the data there
+
+next, run the etl, next make sure to use this: python etl.py --chunk-size 50000
 
 once it loads into the data warehouse u can test it w some queries just to check
