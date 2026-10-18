@@ -1,8 +1,10 @@
 import pandas as pd
-from sqlalchemy import text
+from sqlalchemy import bindparam, text
 
-# Dice: cancellations at selected stations during weekday peak hours of a year.
-#   Date: weekdays of :yr | Time: Morning/Evening Peak | Station: Amsterdam, Utrecht, Rotterdam Centraal
+# Dice: cancellations by station and time band for a chosen year.
+#   Date: year (:yr) and weekday/weekend (:day_types)
+#   Time: selected time bands (:bands)
+#   Station: selected stations (:stations)
 #
 # Optimizations:
 #   1. Covering index (DICE_INDEX_SQL): the query is answered from the index alone.
@@ -14,6 +16,10 @@ CREATE INDEX idx_fact_dice
 ON fact_stop_event (station_key, sched_dep_time_key, date_key,
                     arrival_cancelled, departure_cancelled)
 """
+
+DAY_TYPES = {"weekday": (0,), "weekend": (1,), "both": (0, 1)}  # dim_date.is_weekend values
+
+STATIONS_SQL = text("SELECT DISTINCT station_name FROM dim_station ORDER BY station_name")
 
 DICE_SQL = text("""
 SELECT s.station_name,
@@ -31,20 +37,30 @@ FROM (
            SUM(f.departure_cancelled) AS cancelled_departures
     FROM fact_stop_event f
     WHERE f.station_key IN (SELECT station_key FROM dim_station
-                            WHERE station_name IN ('Amsterdam Centraal',
-                                                   'Utrecht Centraal',
-                                                   'Rotterdam Centraal'))
+                            WHERE station_name IN :stations)
       AND f.sched_dep_time_key IN (SELECT time_key FROM dim_time
-                                   WHERE time_band IN ('Morning Peak', 'Evening Peak'))
+                                   WHERE time_band IN :bands)
       AND f.date_key IN (SELECT date_key FROM dim_date
-                         WHERE year_num = :yr AND is_weekend = 0)
+                         WHERE year_num = :yr AND is_weekend IN :day_types)
     GROUP BY f.station_key, f.sched_dep_time_key
 ) a
 JOIN dim_station s ON s.station_key = a.station_key
 JOIN dim_time    t ON t.time_key    = a.time_key
 GROUP BY s.station_name, t.time_band
 ORDER BY cancelled_departures DESC, s.station_name, t.time_band
-""")
+""").bindparams(bindparam("stations", expanding=True),
+                bindparam("bands", expanding=True),
+                bindparam("day_types", expanding=True))
 
-def run_dice(engine, year=2025):
-    return pd.read_sql(DICE_SQL, engine, params={"yr": year})
+NUMBER_COLS = ["total_stop_events", "cancelled_arrivals",
+               "cancelled_departures", "arrival_cancellation_pct"]
+
+def get_stations(engine):
+    return pd.read_sql(STATIONS_SQL, engine)["station_name"].tolist()
+
+def run_dice(engine, year, stations, bands, day="weekday"):
+    df = pd.read_sql(DICE_SQL, engine, params={
+        "yr": year, "stations": list(stations), "bands": list(bands),
+        "day_types": list(DAY_TYPES[day])})
+    df[NUMBER_COLS] = df[NUMBER_COLS].apply(pd.to_numeric)  # MySQL SUM() returns Decimal -> JSON strings
+    return df
