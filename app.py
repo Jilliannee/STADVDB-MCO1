@@ -1,17 +1,19 @@
 import os
 from functools import lru_cache
 import pandas as pd
-from flask import Flask, Response, render_template, request
+from flask import Flask, Response, jsonify, render_template, request
 from sqlalchemy import create_engine
 from sqlalchemy.engine import URL
 from slice_drill import MONTHLY_SQL, WEEKLY_SQL
 from dice import DAY_TYPES, STATIONS, run_dice
 from rollup import run_rollup
+import time
+from pivot import HOUR_LABELS, run_pivot
 
 engine = create_engine(URL.create(
     "mysql+pymysql",
     username=os.environ.get("DB_USER", "root"),
-    password=os.environ.get("DB_PASSWORD", "mysql"), #put the password of your connection here
+    password=os.environ.get("DB_PASSWORD", " "), #put the password of your connection here
     host=os.environ.get("DB_HOST", "localhost"),
     port=int(os.environ.get("DB_PORT", 3306)),
     database=os.environ.get("DB_NAME", "railway_dw"),
@@ -65,6 +67,18 @@ def dice():
 def rollup():
     yr = request.args.get("year", 2025, type=int)
     return Response(run_rollup_cached(yr), mimetype="application/json")
+@app.route("/api/pivot")
+def pivot():
+    # /api/pivot?year=2025&top=15&optimized=1|0  (not cached, so timings are real)
+    top = min(max(request.args.get("top", 15, type=int), 1), 50)
+    t0 = time.perf_counter()
+    df = run_pivot(engine, request.args.get("year", 2025, type=int), top,
+                   request.args.get("optimized", "1") != "0")
+    rows = [{"station": n, "total": int(r["total_arrivals"]),
+             "values": [None if pd.isna(r[h]) else float(r[h]) for h in HOUR_LABELS]}
+            for n, r in df.iterrows()]
+    return jsonify(hours=HOUR_LABELS, rows=rows,
+                   elapsed_ms=round((time.perf_counter() - t0) * 1000, 1))
 
 if __name__ == "__main__":
     app.run(debug=True)
