@@ -15,20 +15,20 @@ engine = create_engine(URL.create(
 ))
 
 MONTHLY_SQL = text("""
-SELECT d.year_num, d.month_num, COUNT(*) AS arrivals,
-       ROUND(AVG(f.arrival_delay_min), 2) AS avg_delay_min
-FROM fact_stop_event f JOIN dim_date d ON d.date_key = f.date_key
-WHERE d.year_num = :yr AND f.arrival_cancelled = 0
-  AND f.arrival_delay_min IS NOT NULL
+SELECT d.year_num, d.month_num,
+       SUM(a.arrivals) AS arrivals,
+       ROUND(SUM(a.delay_sum) / SUM(a.arrivals), 2) AS avg_delay_min
+FROM agg_daily_arrivals a JOIN dim_date d ON d.date_key = a.date_key
+WHERE d.year_num = :yr
 GROUP BY d.year_num, d.month_num ORDER BY d.month_num
 """)
 
 WEEKLY_SQL = text("""
 SELECT d.iso_week, MIN(d.full_date) AS week_starts_in_month,
-       COUNT(*) AS arrivals, ROUND(AVG(f.arrival_delay_min), 2) AS avg_delay_min
-FROM fact_stop_event f JOIN dim_date d ON d.date_key = f.date_key
+       SUM(a.arrivals) AS arrivals,
+       ROUND(SUM(a.delay_sum) / SUM(a.arrivals), 2) AS avg_delay_min
+FROM agg_daily_arrivals a JOIN dim_date d ON d.date_key = a.date_key
 WHERE d.year_num = :yr AND d.month_num = :mo
-  AND f.arrival_cancelled = 0 AND f.arrival_delay_min IS NOT NULL
 GROUP BY d.iso_week ORDER BY week_starts_in_month
 """)
 
