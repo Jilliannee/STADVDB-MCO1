@@ -17,14 +17,46 @@
   <h2>Weekly average delay (<span id="monthName"></span>)</h2>
   <canvas id="w"></canvas>
 
+  <div id="trendStatus" style="color:#b00"></div>
+
+  <h2>Dice: cancellations by station and time band (<span id="diceTitle"></span>)</h2>
+  <div>
+    <b>Station</b>
+    <label><input type="checkbox" class="station" value="Amsterdam Centraal" checked> Amsterdam Centraal</label>
+    <label><input type="checkbox" class="station" value="Utrecht Centraal" checked> Utrecht Centraal</label>
+    <label><input type="checkbox" class="station" value="Rotterdam Centraal" checked> Rotterdam Centraal</label>
+  </div>
+  <div>
+    <b>Time band</b>
+    <label><input type="checkbox" class="band" value="Night"> Night (00:00-05:59)</label>
+    <label><input type="checkbox" class="band" value="Morning Peak" checked> Morning Peak (06:00-08:59)</label>
+    <label><input type="checkbox" class="band" value="Midday"> Midday (09:00-15:59)</label>
+    <label><input type="checkbox" class="band" value="Evening Peak" checked> Evening Peak (16:00-18:59)</label>
+    <label><input type="checkbox" class="band" value="Late"> Late (19:00-23:59)</label>
+  </div>
+  <div>
+    <b>Days</b>
+    <label><input type="radio" name="day" value="weekday" checked> Weekdays</label>
+    <label><input type="radio" name="day" value="weekend"> Weekends</label>
+    <label><input type="radio" name="day" value="both"> Both</label>
+    <button onclick="loadDice()">Run dice</button>
+    <span id="diceStatus"></span>
+  </div>
+  <canvas id="d"></canvas>
+  <table id="dt" border="1" cellpadding="4" style="border-collapse:collapse;margin-top:1rem">
+    <thead><tr><th>Station</th><th>Time band</th><th>Stop events</th>
+      <th>Cancelled arrivals</th><th>Cancelled departures</th><th>Arrival cancel %</th></tr></thead>
+    <tbody></tbody>
+  </table>
+
 <script>
 const MONTHS = ["January","February","March","April","May","June",
                 "July","August","September","October","November","December"];
 const sel = document.getElementById("month"); 
 for (let i = 1; i <= 12; i++) sel.add(new Option(MONTHS[i-1], i, false, i === 1));
-let mc, wc;
+let mc, wc, dc;
 
-async function load() {
+async function loadTrends() {
   const y = document.getElementById("year").value, mo = sel.value;
   document.getElementById("monthName").textContent = `${MONTHS[mo-1]} ${y}`;  // <- this one too
   const m = await (await fetch(`/api/monthly?year=${y}`)).json();
@@ -36,6 +68,55 @@ async function load() {
   wc = new Chart("w", {type: "bar", data: {
     labels: w.map(r => "Wk " + r.iso_week),
     datasets: [{label: "Avg delay (min)", data: w.map(r => r.avg_delay_min)}]}});
+}
+
+// ---- Dice selection ----
+const DAY_LABEL = {weekday: "weekdays", weekend: "weekends", both: "all days"};
+const num = v => Number(v).toLocaleString();
+
+async function loadDice() {
+  const y = document.getElementById("year").value;
+  const stations = [...document.querySelectorAll(".station:checked")].map(c => c.value);
+  const bands = [...document.querySelectorAll(".band:checked")].map(c => c.value);
+  const day = document.querySelector("input[name=day]:checked").value;
+  const status = document.getElementById("diceStatus");
+  document.getElementById("diceTitle").textContent = `${DAY_LABEL[day]}, ${y}`;
+  if (!stations.length || !bands.length) {
+    status.textContent = "Select at least one station and one time band.";
+    return;
+  }
+  const qs = new URLSearchParams({year: y, day});
+  stations.forEach(n => qs.append("station", n));
+  bands.forEach(b => qs.append("band", b));
+  status.textContent = "Loading... (a first run can take a while)";
+  try {
+    const r = await fetch(`/api/dice?${qs}`);
+    if (!r.ok) throw new Error(`server returned ${r.status} - check the Flask terminal`);
+    const d = await r.json();
+
+    const names = [...new Set(d.map(r => r.station_name))];
+    const bandNames = [...new Set(d.map(r => r.time_band))];
+    const datasets = bandNames.map(b => ({
+      label: b + " - cancelled departures",
+      data: names.map(n => (d.find(r => r.station_name === n && r.time_band === b) || {}).cancelled_departures || 0)}));
+    if (dc) dc.destroy();
+    dc = new Chart("d", {type: "bar", data: {labels: names, datasets}});
+
+    document.querySelector("#dt tbody").innerHTML = d.map(r => `<tr><td>${r.station_name}</td><td>${r.time_band}</td>
+      <td>${num(r.total_stop_events)}</td><td>${num(r.cancelled_arrivals)}</td>
+      <td>${num(r.cancelled_departures)}</td><td>${r.arrival_cancellation_pct}</td></tr>`).join("");
+    status.textContent = d.length ? "" : "No rows for this selection.";
+  } catch (e) {
+    status.textContent = "Error: " + e.message;
+  }
+}
+
+// Each section loads on its own, so one failing query cannot blank the others.
+function load() {
+  loadTrends().then(() => document.getElementById("trendStatus").textContent = "")
+              .catch(e => document.getElementById("trendStatus").textContent =
+                          "Monthly/weekly charts failed: " + e.message);
+  loadDice();
 }
 load();
 </script>
