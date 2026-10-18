@@ -1,29 +1,3 @@
-#!/usr/bin/env python3
-"""
-STADVDB MCO1 - ETL script
-Source : MySQL  mco1.services_raw  (flat Dutch railway stop-event table, 2025)
-Target : MySQL  railway_dw                (star schema: fact_stop_event + 4 dimensions)
-
-Pipeline
-  1. EXTRACT   stream the source table in chunks (server-side cursor) so the
-               ~3 GB table never has to fit in memory.
-  2. TRANSFORM clean text, convert types, split ISO timestamps into a time key,
-               convert 'true'/'false' to flags, fix NULLs, derive is_arrival_late,
-               look up surrogate keys, reject bad rows (written to a reject file).
-  3. LOAD      build/refresh dimensions first, then bulk-insert facts in batches.
-  4. VALIDATE  reconcile row counts and measure totals, check orphan keys and
-               duplicate stop ids, and print PASS/FAIL.
-
-Requirements:  pip install pandas numpy sqlalchemy pymysql
-
-Usage examples
-  python STADVDB-MCO1-GroupN-ETL.py --limit 200000      # quick test run
-  python STADVDB-MCO1-GroupN-ETL.py                      # full reload (truncates fact table)
-  python STADVDB-MCO1-GroupN-ETL.py --append             # keep existing fact rows
-
-Connection settings come from environment variables (see CONFIG) or are prompted.
-"""
-
 import argparse
 import getpass
 import logging
@@ -64,8 +38,6 @@ DW = {
 
 SRC_TABLE = "services_raw"
 
-# logical name -> actual column name in the source table.
-# If your imported table uses different names, edit the right-hand side only.
 SRC_COLS = {
     "service_rdt_id": "service_rdt_id",
     "service_date": "service_date",
@@ -86,13 +58,12 @@ SRC_COLS = {
     "platform_change": "platform_change",
 }
 
-CHUNK_SIZE = 200_000      # rows pulled from the source per iteration
+CHUNK_SIZE = 200_000      # rows from the source per iteration
 INSERT_BATCH = 20_000     # rows per multi-row INSERT into the warehouse
 
-# Business rules (justify these in the report)
-LATE_THRESHOLD_MIN = 3                 # arrival delay >= this many minutes counts as late
-NULLIFY_DELAY_WHEN_CANCELLED = True    # a cancelled stop has no meaningful delay
-SMALLINT_MAX = 32767                   # delay columns are SMALLINT in the warehouse
+LATE_THRESHOLD_MIN = 3
+NULLIFY_DELAY_WHEN_CANCELLED = True
+SMALLINT_MAX = 32767
 
 REJECT_FILE = "etl_rejects.csv"
 LOG_FILE = "etl.log"
@@ -100,7 +71,7 @@ LOG_FILE = "etl.log"
 FACT_SRC_COLS = [
     "service_rdt_id", "service_date", "service_type", "company", "train_number",
     "completely_cancelled", "partly_cancelled", "stop_rdt_id",
-    "station_code", "station_name",  # CHANGED: include station_code for reliable station-key lookup
+    "station_code", "station_name",
     "arrival_time", "arrival_delay", "arrival_cancelled",
     "departure_time", "departure_delay", "departure_cancelled", "platform_change",
 ]
@@ -126,7 +97,7 @@ log = logging.getLogger("etl")
 
 
 # =============================================================================
-# SMALL HELPERS
+# HELPERS
 # =============================================================================
 
 
@@ -169,12 +140,12 @@ _BOOL_MAP = {"true": 1, "false": 0, "1": 1, "0": 0, "t": 1, "f": 0, "yes": 1, "n
 
 def to_flag(ser):
     """Convert known Boolean forms to 0/1; return flag, null mask, and invalid-value mask."""
-    s = ser.astype("string").str.strip().str.lower()  # CHANGED: preserve nullable strings for validation
+    s = ser.astype("string").str.strip().str.lower()  # preserve nullable strings for validation
     mapped = s.map(_BOOL_MAP)
     null_mask = ser.isna() | s.eq("").fillna(False)
-    invalid_mask = (~null_mask) & mapped.isna()  # CHANGED: distinguish invalid values from genuine NULLs
+    invalid_mask = (~null_mask) & mapped.isna()  # distinguish invalid values
     flags = pd.to_numeric(mapped, errors="coerce").fillna(0).astype("int8")
-    return flags, null_mask, invalid_mask  # CHANGED: expose invalid values so ETL can reject them
+    return flags, null_mask, invalid_mask
 
 
 def time_band(hour):
@@ -205,7 +176,7 @@ def bulk_insert(cur, table, columns, rows, ignore=False, batch=INSERT_BATCH):
 
 
 # =============================================================================
-# SCHEMA CHECK
+# CJECK SCHEMA
 # =============================================================================
 
 
@@ -224,7 +195,7 @@ def check_schema(cur):
 
 
 # =============================================================================
-# DIMENSION LOADERS
+# LOAD DIMENSIONS
 # =============================================================================
 
 
@@ -269,8 +240,6 @@ def load_dim_station(src_conn, cur, stats):
     raw["station_name"] = clean_text(raw["station_name"])
     raw["station_code"] = clean_text(raw["station_code"])
 
-    # CHANGED: station_code is the station identity; do not collapse distinct codes by station name.
-    # CHANGED: rows without a code cannot satisfy dim_station.station_code NOT NULL, so omit them here.
     missing_codes = raw["station_code"].isna()
     stats["source_station_rows_missing_code"] += int(missing_codes.sum())
     raw = raw.dropna(subset=["station_code", "station_name"])
@@ -279,7 +248,7 @@ def load_dim_station(src_conn, cur, stats):
     bulk_insert(cur, "dim_station", ["station_code", "station_name"],
                 to_rows(raw, ["station_code", "station_name"]), ignore=True)
 
-    # CHANGED: map station codes to surrogate keys instead of mapping by station name.
+    #map station codes to surrogate keys
     cur.execute("SELECT station_code, station_key FROM dim_station")
     station_map = dict(cur.fetchall())
     missing = set(raw["station_code"]) - set(station_map)
@@ -324,9 +293,9 @@ def transform_chunk(raw, station_map, train_df, date_keys, stats):
     df = raw.copy()
     stats["extracted"] += len(df)
 
-    # ---- CLEANING: whitespace, blanks -> NULL, NULL company/type -> 'Unknown'
+    # CLEAN whitespace, blanks, NULL, etc
     df["station_name"] = clean_text(df["station_name"])
-    df["station_code"] = clean_text(df["station_code"])  # CHANGED: clean station code before lookup
+    df["station_code"] = clean_text(df["station_code"])  
     comp = clean_text(df["company"])
     stats["filled_unknown_company"] += int(comp.isna().sum())
     df["company"] = comp.fillna("Unknown")
@@ -334,32 +303,31 @@ def transform_chunk(raw, station_map, train_df, date_keys, stats):
     stats["filled_unknown_service_type"] += int(stype.isna().sum())
     df["service_type"] = stype.fillna("Unknown")
 
-    # ---- TYPE CONVERSION
+    # TYPE CONVERSION
     for c in ("service_rdt_id", "stop_rdt_id", "train_number"):
         df[c] = pd.to_numeric(df[c], errors="coerce")
     d = pd.to_datetime(df["service_date"], errors="coerce")
     df["date_key"] = d.dt.year * 10000 + d.dt.month * 100 + d.dt.day
 
-    # ---- SPLITTING: ISO timestamp -> time key (minutes since midnight, -1 unknown)
+    # SPLIT
     df["sched_arr_time_key"], bad_arr = time_key(df["arrival_time"])
     df["sched_dep_time_key"], bad_dep = time_key(df["departure_time"])
     stats["unparseable_time_values"] += int(bad_arr.sum() + bad_dep.sum())
     stats["no_scheduled_arrival(first stops)"] += int((df["sched_arr_time_key"] == -1).sum())
     stats["no_scheduled_departure(last stops)"] += int((df["sched_dep_time_key"] == -1).sum())
 
-    # ---- FIXING NULLS / BOOLEANS: 'true'/'false' text -> 0/1 flags
-    arr_c, arr_null, arr_invalid = to_flag(df["arrival_cancelled"])  # CHANGED: capture invalid values
-    dep_c, dep_null, dep_invalid = to_flag(df["departure_cancelled"])  # CHANGED: capture invalid values
-    full_c, full_null, full_invalid = to_flag(df["completely_cancelled"])  # CHANGED
-    part_c, part_null, part_invalid = to_flag(df["partly_cancelled"])  # CHANGED
-    plat, plat_null, plat_invalid = to_flag(df["platform_change"])  # CHANGED
+    # FIXING NULLS / BOOLEANS (make t/f = 0/1 flags)
+    arr_c, arr_null, arr_invalid = to_flag(df["arrival_cancelled"])  
+    dep_c, dep_null, dep_invalid = to_flag(df["departure_cancelled"])  
+    full_c, full_null, full_invalid = to_flag(df["completely_cancelled"])
+    part_c, part_null, part_invalid = to_flag(df["partly_cancelled"])
+    plat, plat_null, plat_invalid = to_flag(df["platform_change"])
     stats["null_service_or_platform_flags_set_to_0"] += int(
         full_null.sum() + part_null.sum() + plat_null.sum())
-    # CHANGED: reject malformed Boolean values instead of silently treating them as false.
+
     invalid_bool = arr_invalid | dep_invalid | full_invalid | part_invalid | plat_invalid
     stats["invalid_boolean_values"] += int(invalid_bool.sum())
 
-    # ---- MEASURES
     arr_d = pd.to_numeric(df["arrival_delay"], errors="coerce")
     dep_d = pd.to_numeric(df["departure_delay"], errors="coerce")
     stats["non_numeric_delay_values"] += int(
@@ -374,7 +342,7 @@ def transform_chunk(raw, station_map, train_df, date_keys, stats):
     df["arrival_delay_min"] = arr_d.round().where(~out_of_range).astype("Int32")
     df["departure_delay_min"] = dep_d.round().where(~out_of_range).astype("Int32")
 
-    # ---- DERIVED ATTRIBUTE
+    # DERIVED ATTRIBUTE
     df["is_arrival_late"] = ((arr_d >= LATE_THRESHOLD_MIN) & (arr_c == 0)).astype("int8")
 
     df["arrival_cancelled"] = arr_c
@@ -383,11 +351,10 @@ def transform_chunk(raw, station_map, train_df, date_keys, stats):
     df["service_partly_cancelled"] = part_c
     df["platform_changed"] = plat
 
-    # ---- MERGING: surrogate keys from the dimensions
-    df["station_key"] = df["station_code"].map(station_map)  # CHANGED: use station_code, not station_name
+    # MERGE surrogate keys from the dimensions
+    df["station_key"] = df["station_code"].map(station_map)
     df = df.merge(train_df, how="left", on=["company", "service_type", "train_number"])
 
-    # ---- REJECT RULES (first matching reason wins)
     reason = pd.Series("", index=df.index, dtype=object)
 
     def flag(mask, why):
@@ -398,16 +365,16 @@ def transform_chunk(raw, station_map, train_df, date_keys, stats):
     flag(df["service_rdt_id"].isna() | df["stop_rdt_id"].isna(), "missing service/stop id")
     flag(df["date_key"].isna() | ~df["date_key"].isin(date_keys), "invalid service date")
     flag(df["station_name"].isna(), "missing station name")
-    flag(df["station_code"].isna(), "missing station code")  # CHANGED: required for accurate station mapping
-    flag(invalid_bool, "invalid Boolean flag value")  # CHANGED: reject malformed Boolean values
+    flag(df["station_code"].isna(), "missing station code")
+    flag(invalid_bool, "invalid Boolean flag value")
     flag(df["train_number"].isna(), "missing train number")
     flag(out_of_range.reindex(df.index, fill_value=False), "delay out of SMALLINT range")
-    flag(df["station_key"].isna(), "station code not in dim_station")  # CHANGED: clarify code-based lookup
+    flag(df["station_key"].isna(), "station code not in dim_station")
     flag(df["train_key"].isna(), "train not in dim_train")
     still_ok = df[reason == ""]
     dup = pd.Series(False, index=df.index)
     dup.loc[still_ok.index] = still_ok.duplicated(subset="stop_rdt_id", keep="first")
-    flag(dup, "duplicate stop id within chunk")  # NOTE: cross-chunk duplicates still need a DB-level check.
+    flag(dup, "duplicate stop id within chunk")  
 
     bad = reason != ""
     if bad.any():
@@ -425,7 +392,7 @@ def transform_chunk(raw, station_map, train_df, date_keys, stats):
 
 
 # =============================================================================
-# VALIDATION
+# VALIDATE
 # =============================================================================
 
 
@@ -544,7 +511,7 @@ def main():
         with dw.cursor() as cur:
             check_schema(cur)
 
-            # ---------- dimensions ----------
+            # dimension 
             log.info("Loading dimensions ...")
             with src_engine.connect() as sconn:
                 date_keys = load_dim_date(sconn, cur)
@@ -553,7 +520,7 @@ def main():
                 train_df = load_dim_train(sconn, cur)
             dw.commit()
 
-            # ---------- facts ----------
+            # fact
             if not args.append:
                 cur.execute("TRUNCATE TABLE fact_stop_event")
                 log.info("fact_stop_event truncated (full reload)")
@@ -579,7 +546,7 @@ def main():
 
             cur.execute("SET SESSION foreign_key_checks = 1")
 
-        # ---------- validation ----------
+        # validation
         results = []
         if not args.skip_validate:
             log.info("Validating ...")
