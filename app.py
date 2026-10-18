@@ -39,6 +39,8 @@ app = Flask(__name__)
 def index():
     return render_template("index.html")
 
+
+# handle slice drill report request
 @app.route("/api/monthly")
 def monthly():
     return Response(run("monthly", request.args.get("year", 2025, type=int)),
@@ -50,11 +52,12 @@ def weekly():
                         request.args.get("month", 9, type=int)),
                     mimetype="application/json")
 
+# handle dice report request
 @app.route("/api/dice")
 def dice():
-    # /api/dice?year=2025&station=A&station=B&band=Morning Peak&day=weekday|weekend|both
+    #get selected stations, time bands, and day type
     asked = request.args.getlist("station")
-    stations = tuple(st for st in STATIONS if st in asked)   # only the 3 allowed stations
+    stations = tuple(st for st in STATIONS if st in asked)  #only select 3 cjosen stations
     bands = tuple(sorted(request.args.getlist("band")))
     day = request.args.get("day", "weekday")
     if not stations or not bands or day not in DAY_TYPES:
@@ -63,13 +66,16 @@ def dice():
                                     stations, bands, day),
                     mimetype="application/json")
 
+# handle rollup report request
 @app.route("/api/rollup")
 def rollup():
     yr = request.args.get("year", 2025, type=int)
     return Response(run_rollup_cached(yr), mimetype="application/json")
+
+# handle pivot report request
 @app.route("/api/pivot")
 def pivot():
-    # /api/pivot?year=2025&top=15&optimized=1|0  (not cached, so timings are real)
+    #limit requested number of stations to 50
     top = min(max(request.args.get("top", 15, type=int), 1), 50)
     t0 = time.perf_counter()
     df = run_pivot(engine, request.args.get("year", 2025, type=int), top,
