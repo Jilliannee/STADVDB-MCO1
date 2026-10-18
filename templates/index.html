@@ -19,6 +19,26 @@
 
   <div id="trendStatus" style="color:#b00"></div>
 
+  <h2>Roll-up Summary Hierarchy (Year &rarr; Quarter &rarr; Month)</h2>
+  <button onclick="loadRollup()">Run Roll-up</button>
+  <span id="rollupStatus"></span>
+  <table id="rt" border="1" cellpadding="4" style="border-collapse:collapse;margin-top:1rem;width:100%;">
+    <thead>
+      <tr style="background-color:#f2f2f2;">
+        <th>Hierarchy Level</th>
+        <th>Year</th>
+        <th>Quarter</th>
+        <th>Month</th>
+        <th>Total Stops</th>
+        <th>Cancelled Arrivals</th>
+        <th>Total Delay (min)</th>
+        <th>Avg Delay (min)</th>
+        <th>Cancel %</th>
+      </tr>
+    </thead>
+    <tbody></tbody>
+  </table>
+
   <h2>Cancellations by station and time band (<span id="diceTitle"></span>)</h2>
   <div>
     <b>Station</b>
@@ -78,7 +98,7 @@ let mc, wc, dc;
 
 async function loadTrends() {
   const y = document.getElementById("year").value, mo = sel.value;
-  document.getElementById("monthName").textContent = `${MONTHS[mo-1]} ${y}`;  // <- this one too
+  document.getElementById("monthName").textContent = `${MONTHS[mo-1]} ${y}`;
   const m = await (await fetch(`/api/monthly?year=${y}`)).json();
   const w = await (await fetch(`/api/weekly?year=${y}&month=${mo}`)).json();
   if (mc) mc.destroy(); if (wc) wc.destroy();
@@ -88,6 +108,45 @@ async function loadTrends() {
   wc = new Chart("w", {type: "bar", data: {
     labels: w.map(r => "Wk " + r.iso_week),
     datasets: [{label: "Avg delay (min)", data: w.map(r => r.avg_delay_min)}]}});
+}
+
+// ---- Roll-up selection ----
+async function loadRollup() {
+  const y = document.getElementById("year").value;
+  const status = document.getElementById("rollupStatus");
+  status.textContent = "Loading Roll-up data...";
+  try {
+    const r = await fetch(`/api/rollup?year=${y}`);
+    if (!r.ok) throw new Error(`Server returned ${r.status}`);
+    const data = await r.json();
+
+    document.querySelector("#rt tbody").innerHTML = data.map(r => {
+      let level = "Month Detail";
+      let rowStyle = "";
+      if (r.month_num === null && r.quarter_num === null && r.year_num !== null) {
+        level = "<b>YEAR TOTAL</b>";
+        rowStyle = "background-color:#e6f2ff;font-weight:bold;";
+      } else if (r.month_num === null && r.quarter_num !== null) {
+        level = "<b>QUARTER TOTAL</b>";
+        rowStyle = "background-color:#f9f9f9;font-weight:bold;";
+      }
+
+      return `<tr style="${rowStyle}">
+        <td>${level}</td>
+        <td>${r.year_num ?? "All Years"}</td>
+        <td>${r.quarter_num ? "Q" + r.quarter_num : "Subtotal"}</td>
+        <td>${r.month_name ?? "Subtotal"}</td>
+        <td>${num(r.total_stop_events)}</td>
+        <td>${num(r.cancelled_arrivals)}</td>
+        <td>${num(r.total_arrival_delay_min)}</td>
+        <td>${r.avg_arrival_delay_min ?? 0}</td>
+        <td>${r.arrival_cancel_pct}%</td>
+      </tr>`;
+    }).join("");
+    status.textContent = data.length ? "" : "No data found.";
+  } catch (e) {
+    status.textContent = "Roll-up Error: " + e.message;
+  }
 }
 
 // ---- Dice selection ----
@@ -193,6 +252,7 @@ function load() {
   loadTrends().then(() => document.getElementById("trendStatus").textContent = "")
               .catch(e => document.getElementById("trendStatus").textContent =
                           "Monthly/weekly charts failed: " + e.message);
+  loadRollup();
   loadDice();
   loadPivot();
 }
