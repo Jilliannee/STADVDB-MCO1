@@ -4,7 +4,7 @@ from sqlalchemy import bindparam, text
 # Dice: cancellations by station and time band for a chosen year.
 #   Date: year (:yr) and weekday/weekend (:day_types)
 #   Time: selected time bands (:bands)
-#   Station: selected stations (:stations)
+#   Station: any of the 3 allowed STATIONS (:stations)
 #
 # Optimizations:
 #   1. Covering index (DICE_INDEX_SQL): the query is answered from the index alone.
@@ -18,8 +18,7 @@ ON fact_stop_event (station_key, sched_dep_time_key, date_key,
 """
 
 DAY_TYPES = {"weekday": (0,), "weekend": (1,), "both": (0, 1)}  # dim_date.is_weekend values
-
-STATIONS_SQL = text("SELECT DISTINCT station_name FROM dim_station ORDER BY station_name")
+STATIONS = ("Amsterdam Centraal", "Utrecht Centraal", "Rotterdam Centraal")  # the only selectable stations
 
 DICE_SQL = text("""
 SELECT s.station_name,
@@ -54,9 +53,6 @@ ORDER BY cancelled_departures DESC, s.station_name, t.time_band
 
 NUMBER_COLS = ["total_stop_events", "cancelled_arrivals",
                "cancelled_departures", "arrival_cancellation_pct"]
-
-def get_stations(engine):
-    return pd.read_sql(STATIONS_SQL, engine)["station_name"].tolist()
 
 def run_dice(engine, year, stations, bands, day="weekday"):
     df = pd.read_sql(DICE_SQL, engine, params={
