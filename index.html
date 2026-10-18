@@ -14,21 +14,24 @@
 
   <h2>Monthly average delay</h2>
   <canvas id="m"></canvas>
-  <h2>Weekly average delay (selected month)</h2>
+  <h2>Weekly average delay (<span id="monthName"></span>)</h2>
   <canvas id="w"></canvas>
 
 <script>
-const sel = document.getElementById("month");
-for (let i = 1; i <= 12; i++) sel.add(new Option(i, i, false, i === 9));
+const MONTHS = ["January","February","March","April","May","June",
+                "July","August","September","October","November","December"];
+const sel = document.getElementById("month"); 
+for (let i = 1; i <= 12; i++) sel.add(new Option(MONTHS[i-1], i, false, i === 1));
 let mc, wc;
 
 async function load() {
   const y = document.getElementById("year").value, mo = sel.value;
+  document.getElementById("monthName").textContent = `${MONTHS[mo-1]} ${y}`;  // <- this one too
   const m = await (await fetch(`/api/monthly?year=${y}`)).json();
   const w = await (await fetch(`/api/weekly?year=${y}&month=${mo}`)).json();
   if (mc) mc.destroy(); if (wc) wc.destroy();
   mc = new Chart("m", {type: "line", data: {
-    labels: m.map(r => r.month_num),
+    labels: m.map(r => MONTHS[r.month_num - 1]),
     datasets: [{label: "Avg delay (min)", data: m.map(r => r.avg_delay_min)}]}});
   wc = new Chart("w", {type: "bar", data: {
     labels: w.map(r => "Wk " + r.iso_week),
