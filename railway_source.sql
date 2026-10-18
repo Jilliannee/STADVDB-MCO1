@@ -24,13 +24,13 @@ CREATE TABLE services_raw (
   actual_platform      VARCHAR(30)
 ) DEFAULT CHARSET=utf8mb4;
 
--- the set global stuff will help with loading the data to the warehouse with the ETL 
+-- help load data to the warehouse with ETL 
 SET GLOBAL net_write_timeout = 7200;
 SET GLOBAL net_read_timeout = 7200;
 SET GLOBAL wait_timeout = 28800;
 SET GLOBAL innodb_buffer_pool_size = 2147483648;
 
--- this section loads the csv into the table in mysql
+-- load csv into the table in mysql
 TRUNCATE TABLE services_raw;
 LOAD DATA LOCAL INFILE'C:/Users/migue/Downloads/MCO1/services-2025.csv' -- change this to the file path u have
 INTO TABLE services_raw
