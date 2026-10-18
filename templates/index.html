@@ -4,73 +4,91 @@
   <meta charset="utf-8">
   <title>Railway Delay Dashboard</title>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
-  <style>body{font-family:sans-serif;max-width:900px;margin:2rem auto}</style>
+  <style>
+    body{font-family:sans-serif;max-width:1000px;margin:2rem auto}
+    .tabs{display:flex;gap:.25rem;border-bottom:2px solid #ccc;margin-bottom:1.5rem}
+    .tabs button{
+      padding:.6rem 1.4rem;border:none;background:none;font-size:1rem;cursor:pointer;
+      border-bottom:3px solid transparent;margin-bottom:-2px;color:#555}
+    .tabs button.active{border-bottom-color:#1a56db;color:#1a56db;font-weight:bold}
+    .tabs button:hover{color:#000}
+    .tab-panel{display:none}
+    .tab-panel.active{display:block}
+  </style>
+<base target="_blank">
 </head>
 <body>
   <h1>Railway Delay Dashboard</h1>
-  <label>Year <input id="year" type="number" value="2025"></label>
-  <label>Month <select id="month"></select></label>
-  <button onclick="load()">Load</button>
+  <label>Year <input id="year" type="number" value="2025" style="width:6rem"></label>
+  <button onclick="loadAll()">Load</button>
 
-  <h2>Monthly average delay</h2>
-  <canvas id="m"></canvas>
-  <h2>Weekly average delay (<span id="monthName"></span>)</h2>
-  <canvas id="w"></canvas>
-
-  <div id="trendStatus" style="color:#b00"></div>
-
-  <h2>Roll-up Summary Hierarchy (Year &rarr; Quarter &rarr; Month)</h2>
-  <button onclick="loadRollup()">Run Roll-up</button>
-  <span id="rollupStatus"></span>
-  <table id="rt" border="1" cellpadding="4" style="border-collapse:collapse;margin-top:1rem;width:100%;">
-    <thead>
-      <tr style="background-color:#f2f2f2;">
-        <th>Hierarchy Level</th>
-        <th>Year</th>
-        <th>Quarter</th>
-        <th>Month</th>
-        <th>Total Stops</th>
-        <th>Cancelled Arrivals</th>
-        <th>Total Delay (min)</th>
-        <th>Avg Delay (min)</th>
-        <th>Cancel %</th>
-      </tr>
-    </thead>
-    <tbody></tbody>
-  </table>
-
-  <h2>Cancellations by station and time band (<span id="diceTitle"></span>)</h2>
-  <div>
-    <b>Station</b>
-    <label><input type="checkbox" class="station" value="Amsterdam Centraal" checked> Amsterdam Centraal</label>
-    <label><input type="checkbox" class="station" value="Utrecht Centraal" checked> Utrecht Centraal</label>
-    <label><input type="checkbox" class="station" value="Rotterdam Centraal" checked> Rotterdam Centraal</label>
+  <div class="tabs" style="margin-top:1rem">
+    <button class="tab active" data-tab="slice">Slice</button>
+    <button class="tab" data-tab="rollup">Roll-up</button>
+    <button class="tab" data-tab="dice">Dice</button>
+    <button class="tab" data-tab="pivot">Pivot</button>
   </div>
-  <div>
-    <b>Time band</b>
-    <label><input type="checkbox" class="band" value="Night"> Night (00:00-05:59)</label>
-    <label><input type="checkbox" class="band" value="Morning Peak" checked> Morning Peak (06:00-08:59)</label>
-    <label><input type="checkbox" class="band" value="Midday"> Midday (09:00-15:59)</label>
-    <label><input type="checkbox" class="band" value="Evening Peak" checked> Evening Peak (16:00-18:59)</label>
-    <label><input type="checkbox" class="band" value="Late"> Late (19:00-23:59)</label>
-  </div>
-  <div>
-    <b>Days</b>
-    <label><input type="radio" name="day" value="weekday" checked> Weekdays</label>
-    <label><input type="radio" name="day" value="weekend"> Weekends</label>
-    <label><input type="radio" name="day" value="both"> Both</label>
-    <button onclick="loadDice()">Run dice</button>
-    <span id="diceStatus"></span>
-  </div>
-  <canvas id="d"></canvas>
-  <table id="dt" border="1" cellpadding="4" style="border-collapse:collapse;margin-top:1rem">
-    <thead><tr><th>Station</th><th>Time band</th><th>Stop events</th>
-      <th>Cancelled arrivals</th><th>Cancelled departures</th><th>Arrival cancel %</th></tr></thead>
-    <tbody></tbody>
-  </table>
 
-  <h2>Average arrival delay by station and hour (<span id="pivotTitle"></span>)</h2>
-  <div>
+  <div id="slice" class="tab-panel active">
+    <h2>Monthly &amp; weekly average delay (slice &amp; drill-down)</h2>
+    <label>Month <select id="month"></select></label>
+    <div id="sliceStatus" style="color:#b00"></div>
+    <h3>Monthly average delay</h3>
+    <canvas id="m"></canvas>
+    <h3>Weekly average delay (<span id="monthName"></span>)</h3>
+    <canvas id="w"></canvas>
+  </div>
+
+  <div id="rollup" class="tab-panel">
+    <h2>Roll-up Summary Hierarchy (Year &rarr; Quarter &rarr; Month)</h2>
+    <button onclick="loadRollup()">Run Roll-up</button>
+    <span id="rollupStatus"></span>
+    <table id="rt" border="1" cellpadding="4" style="border-collapse:collapse;margin-top:1rem;width:100%;">
+      <thead>
+        <tr style="background-color:#f2f2f2;">
+          <th>Hierarchy Level</th><th>Year</th><th>Quarter</th><th>Month</th>
+          <th>Total Stops</th><th>Cancelled Arrivals</th><th>Total Delay (min)</th>
+          <th>Avg Delay (min)</th><th>Cancel %</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+  </div>
+
+  <div id="dice" class="tab-panel">
+    <h2>Cancellations by station and time band (<span id="diceTitle"></span>)</h2>
+    <div>
+      <b>Station</b>
+      <label><input type="checkbox" class="station" value="Amsterdam Centraal" checked> Amsterdam Centraal</label>
+      <label><input type="checkbox" class="station" value="Utrecht Centraal" checked> Utrecht Centraal</label>
+      <label><input type="checkbox" class="station" value="Rotterdam Centraal" checked> Rotterdam Centraal</label>
+    </div>
+    <div style="margin-top:.5rem">
+      <b>Time band</b>
+      <label><input type="checkbox" class="band" value="Night"> Night (00:00-05:59)</label>
+      <label><input type="checkbox" class="band" value="Morning Peak" checked> Morning Peak (06:00-08:59)</label>
+      <label><input type="checkbox" class="band" value="Midday"> Midday (09:00-15:59)</label>
+      <label><input type="checkbox" class="band" value="Evening Peak" checked> Evening Peak (16:00-18:59)</label>
+      <label><input type="checkbox" class="band" value="Late"> Late (19:00-23:59)</label>
+    </div>
+    <div style="margin-top:.5rem">
+      <b>Days</b>
+      <label><input type="radio" name="day" value="weekday" checked> Weekdays</label>
+      <label><input type="radio" name="day" value="weekend"> Weekends</label>
+      <label><input type="radio" name="day" value="both"> Both</label>
+      <button onclick="loadDice()">Run dice</button>
+      <span id="diceStatus"></span>
+    </div>
+    <canvas id="d"></canvas>
+    <table id="dt" border="1" cellpadding="4" style="border-collapse:collapse;margin-top:1rem">
+      <thead><tr><th>Station</th><th>Time band</th><th>Stop events</th>
+        <th>Cancelled arrivals</th><th>Cancelled departures</th><th>Arrival cancel %</th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </div>
+
+  <div id="pivot" class="tab-panel">
+    <h2>Average arrival delay by station and hour (<span id="pivotTitle"></span>)</h2>
     <label>Busiest stations <input id="pivotTop" type="number" value="15" min="1" max="50" style="width:4rem"></label>
     <label>Query
       <select id="pivotLevel">
@@ -79,24 +97,43 @@
       </select></label>
     <button onclick="loadPivot()">Run pivot</button>
     <span id="pivotStatus"></span>
+    <p style="font-size:.9rem;color:#444">Each row is a station, each column an hour of the day (scheduled arrival).
+      Cells show the average delay in minutes; darker means later. Blank means no arrivals.</p>
+    <div style="overflow-x:auto">
+      <table id="pv" style="border-collapse:collapse;font-size:.8rem">
+        <thead></thead><tbody></tbody>
+      </table>
+    </div>
+    <div id="pivotLegend" style="margin-top:.5rem;font-size:.8rem"></div>
   </div>
-  <p style="font-size:.9rem;color:#444">Each row is a station, each column an hour of the day (scheduled arrival).
-    Cells show the average delay in minutes; darker means later. Blank means no arrivals.</p>
-  <div style="overflow-x:auto">
-    <table id="pv" style="border-collapse:collapse;font-size:.8rem">
-      <thead></thead><tbody></tbody>
-    </table>
-  </div>
-  <div id="pivotLegend" style="margin-top:.5rem;font-size:.8rem"></div>
 
 <script>
 const MONTHS = ["January","February","March","April","May","June",
                 "July","August","September","October","November","December"];
-const sel = document.getElementById("month"); 
-for (let i = 1; i <= 12; i++) sel.add(new Option(MONTHS[i-1], i, false, i === 1));
+const num = v => Number(v).toLocaleString();
 let mc, wc, dc;
 
-async function loadTrends() {
+// tabs
+const TAB_LOADERS = {
+  slice:  () => load(),
+  rollup:  loadRollup,
+  dice:    loadDice,
+  pivot:   loadPivot,
+};
+document.querySelectorAll(".tab").forEach(btn => btn.addEventListener("click", () => {
+  document.querySelectorAll(".tab").forEach(b => b.classList.remove("active"));
+  document.querySelectorAll(".tab-panel").forEach(p => p.classList.remove("active"));
+  btn.classList.add("active");
+  document.getElementById(btn.dataset.tab).classList.add("active");
+  TAB_LOADERS[btn.dataset.tab]();   // re-render charts at the right size
+}));
+
+// slice_drill-down
+const sel = document.getElementById("month");
+for (let i = 1; i <= 12; i++) sel.add(new Option(MONTHS[i-1], i, false, i === 1));
+sel.addEventListener("change", load);
+
+async function loadSlice() {
   const y = document.getElementById("year").value, mo = sel.value;
   document.getElementById("monthName").textContent = `${MONTHS[mo-1]} ${y}`;
   const m = await (await fetch(`/api/monthly?year=${y}`)).json();
@@ -110,7 +147,14 @@ async function loadTrends() {
     datasets: [{label: "Avg delay (min)", data: w.map(r => r.avg_delay_min)}]}});
 }
 
-// ---- Roll-up selection ----
+function load() {
+  loadSlice().then(() => document.getElementById("sliceStatus").textContent = "")
+              .catch(e => document.getElementById("sliceStatus").textContent =
+                          "Monthly/weekly charts failed: " + e.message);
+}
+
+
+// rolup
 async function loadRollup() {
   const y = document.getElementById("year").value;
   const status = document.getElementById("rollupStatus");
@@ -149,9 +193,8 @@ async function loadRollup() {
   }
 }
 
-// ---- Dice selection ----
+// dice
 const DAY_LABEL = {weekday: "weekdays", weekend: "weekends", both: "all days"};
-const num = v => Number(v).toLocaleString();
 
 async function loadDice() {
   const y = document.getElementById("year").value;
@@ -191,11 +234,10 @@ async function loadDice() {
 }
 
 
-// ---- Pivot: station (rows) x hour (columns) heat-map ----
-// Cell colour: white (lowest average delay in the table) -> red (highest).
+//pivot
 function heat(v, lo, hi) {
   const t = hi > lo ? (v - lo) / (hi - lo) : 0;
-  const g = Math.round(255 - 175 * t);              // fade green+blue channels
+  const g = Math.round(255 - 175 * t);            
   return `rgb(255,${g},${g})`;
 }
 
@@ -247,16 +289,18 @@ async function loadPivot() {
   }
 }
 
-// Each section loads on its own, so one failing query cannot blank the others.
-function load() {
-  loadTrends().then(() => document.getElementById("trendStatus").textContent = "")
-              .catch(e => document.getElementById("trendStatus").textContent =
-                          "Monthly/weekly charts failed: " + e.message);
+document.querySelectorAll(".station,.band,input[name=day]").forEach(el =>
+  el.addEventListener("change", loadDice));
+document.getElementById("pivotLevel").addEventListener("change", loadPivot);
+document.getElementById("year").addEventListener("change", loadAll);
+
+function loadAll() {
+  load();
   loadRollup();
   loadDice();
   loadPivot();
 }
-load();
+loadAll();
 </script>
 </body>
 </html>
