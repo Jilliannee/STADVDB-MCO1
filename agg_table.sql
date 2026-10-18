@@ -1,5 +1,6 @@
 USE railway_dw;
 
+-- for optimzing slice drill operation
 DROP TABLE IF EXISTS agg_daily_arrivals;
 
 CREATE TABLE agg_daily_arrivals AS
@@ -12,11 +13,14 @@ GROUP BY date_key;
 
 ALTER TABLE agg_daily_arrivals ADD PRIMARY KEY (date_key);
 
+
+
+-- for optimizing dice operation
 DROP TABLE IF EXISTS agg_dice_cancellations;
 
 CREATE TABLE agg_dice_cancellations (
   station_key          INT         NOT NULL,
-  date_key             INT         NOT NULL,   -- YYYYMMDD
+  date_key             INT         NOT NULL,
   time_band            VARCHAR(20) NOT NULL,
   stop_events          INT         NOT NULL,
   cancelled_arrivals   INT         NOT NULL,
