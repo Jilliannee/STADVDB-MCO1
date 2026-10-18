@@ -7,9 +7,6 @@ from sqlalchemy import text
 #   Measure: SUM(arrival_delay_min) / COUNT(arrivals)  (never an average of averages)
 #   Date:    year (:d_from..:d_to)
 #
-# MySQL has no PIVOT keyword, so each hour column is a conditional aggregate:
-#   SUM(CASE WHEN hour_24 = h THEN delay END) / NULLIF(SUM(CASE WHEN hour_24 = h THEN count END), 0)
-#
 # Optimizations:
 #   1. Covering index (PIVOT_INDEX_SQL): the inner query is answered from the index alone.
 #   2. Key-range filter: date_key is YYYYMMDD, so a year is one range (a full-year IN-subquery
